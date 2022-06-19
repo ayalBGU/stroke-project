@@ -1,0 +1,787 @@
+---
+title: "Untitled"
+output: html_document
+date: '2022-06-07'
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+```{r}
+#install.packages("installr")
+#library(installr)
+#updateR()
+```
+
+## Install package
+
+```{r}
+# AYALS CODE:
+#install.packages("drat", repos="https://cran.rstudio.com")
+#drat:::addRepo("dmlc")
+#install.packages("xgboost", repos="http://dmlc.ml/drat/", type = "source")
+#install.packages('gmum.r')
+#install.packages("forecast")
+#install.packages("remotes")
+#install.packages("caret")
+#install.packages("devtools")
+#remotes::install_github("dongyuanwu/RSBID")
+#remotes::install_github("dongyuanwu/RSBID", build_vignettes=FALSE)
+#devtools::install_github("dongyuanwu/09",force = TRUE)
+#install.packages('e1071') # for the svm model
+# install.packages("class")
+
+# remotes::install_github("drizzersilverberg/gradDescentR")
+
+#install.packages('ada')
+```
+
+## Install the packages
+```{r}
+# jiana CODE:
+#install.packages("forecast")
+#install.packages("remotes")
+#install.packages("caret")
+#install.packages('randomForest')
+#remotes::install_github("dongyuanwu/RSBID")
+#devtools::install_github("dongyuanwu/09",force = TRUE)
+#install.packages("class")
+# devtools::install_github("drizzersilverberg/gradDescentR")
+# install.packages('ada')
+# install.packages("klaR")# rda model
+```
+
+
+## Import the libraries
+
+```{r}
+library(tidyverse)
+library(pROC)
+library(caret)
+library(pROC)
+library("DMwR")
+library(devtools)
+library(RSBID)
+library(dplyr)
+library(caret)
+library(e1071)
+library(forecast)
+library(randomForest)
+library(class)#KNN
+library(klaR) # rda model
+```
+
+
+```{r}
+set.seed(66113108)
+```
+
+## read the dataset
+
+```{r}
+#AYAL CODE
+#df <- read.csv('/cloud/project/data/healthcare-dataset-stroke-data.csv')
+#JIANA CODE
+df <- read.csv('healthcare-dataset-stroke-data.csv')
+summary(df)
+```
+
+
+## Data preparation
+
+# Data cleaning
+
+First we will delete the id feature since we will not use it.
+
+```{r}
+df <- df[,-1]
+df
+```
+
+The bmi feature type is character, but it should be numeric so will
+change it.
+
+```{r}
+df$bmi <- as.numeric(df$bmi)
+```
+
+#First we will check for any NA values.In the summary above there was no
+#NA values, we will check again after we changed the type of the bmi
+
+```{r}
+summary(df)
+```
+
+As we can see there is 201 NA values in bmi, we will replace each NA
+value with the median.
+
+```{r}
+df$bmi[is.na(df$bmi)] =  median(df$bmi, na.rm = TRUE)
+```
+
+#Now we will check levels of each feature
+
+```{r}
+sapply(df, 
+        function(x) 
+          unique(x) %>% 
+          length()) %>% 
+sort()
+```
+
+We noticed that there is 3 levels of gender which does not seem reasonabl
+
+We will see what is the third value.
+
+```{r}
+unique(df$gender)
+```
+
+We will count how many other we have in gender feature
+
+```{r}
+table(df['gender'])
+```
+
+Since we have more females than men we will change it to female.
+
+```{r}
+df$gender[which(df$gender=='Other')] <- 'Female'
+```
+
+#Now let's check what unique values we have in the smoking_status feature
+
+```{r}
+unique(df$smoking_status)
+```
+
+#Now we will check the values for work_type
+
+```{r}
+unique(df$work_type)
+```
+
+#If the work type is "Never_worked" , it is reasonable that the patient is
+#young.
+
+```{r}
+check = df[df$work_type == "Never_worked", ]  # pick only never worked rows
+ggplot(check, aes(x=age, fill=as.factor(work_type)))+
+  geom_bar(position="fill")+
+  labs(fill='')
+```
+
+# As we can see almost all of the patients who never worked their age is
+# less than 20.
+# So we decided to convert "Never_worked" to "children".
+
+```{r}
+df[df$work_type=='Never_worked','work_type'] <- 'children'
+```
+
+# Now let's check the correlation between the variables.
+
+```{r}
+df2 = df
+df2$ever_married[df2["ever_married"] == "No"] <- 0
+df2$ever_married[df2["ever_married"] == "Yes"] <- 1
+
+df2$gender[df2["gender"] == "Male"] <- 0
+df2$gender[df2["gender"] == "Female"] <- 1
+
+df2$work_type[df2["work_type"] == "Private"] <- 0
+df2$work_type[df2["work_type"] == "Self-employed"] <- 1
+df2$work_type[df2["work_type"] == "Govt_job"] <- 2
+df2$work_type[df2["work_type"] == "children"] <- 3
+
+df2$Residence_type[df2["Residence_type"] == "Urban"] <- 0
+df2$Residence_type[df2["Residence_type"] == "Rural"] <- 1
+
+df2$smoking_status[df2["smoking_status"] == "formerly smoked"] <- 0
+df2$smoking_status[df2["smoking_status"] == "never smoked"] <- 1
+df2$smoking_status[df2["smoking_status"] == "smokes"] <- 2
+df2$smoking_status[df2["smoking_status"] == "Unknown"] <- 3
+
+df2$ever_married = as.numeric(df2$ever_married)
+df2$gender = as.numeric(df2$gender)
+df2$work_type = as.numeric(df2$work_type)
+df2$Residence_type = as.numeric(df2$Residence_type)
+df2$smoking_status = as.numeric(df2$smoking_status)
+```
+
+We will use this table later for deciding what value the lambda should
+be RDA model.
+
+```{r}
+cor(df2,df2$stroke,method="kendall")
+```
+
+We noticed that no variable has a strong correlation with stroke.
+
+
+## After we cleaned our data we will now balance it using SMOTE.
+
+But before the smote ,we will convert the binary variables and the categorical
+to factor.
+
+Also we will convert the gender into binary and then into factor.
+0 = female
+1 = male
+
+```{r}
+df$stroke = as.factor(df$stroke)
+df$hypertension <- as.factor(df$hypertension)
+df$heart_disease <- as.factor(df$heart_disease)
+df$ever_married <- factor(as.factor(df$ever_married),labels = c(0,1))
+df$Residence_type <- as.factor(df$Residence_type)
+df$gender <- factor(df$gender,labels = c(0,1))
+df$work_type <- as.factor(df$work_type)
+df$smoking_status<- as.factor(df$smoking_status)
+df$age<- as.numeric(df$age)
+df$bmi = as.numeric(df$bmi)
+```
+
+# First we want to split our data into train and test.
+
+```{r}
+train <- createDataPartition(df$stroke, p = 0.8,list = FALSE)
+                                      
+df_train <- df[train,]
+df_test <- df[-train,]
+```
+
+```{r}
+table(df_train$stroke)
+```
+
+# Now we will balance the data
+
+```{r}
+df_smote = SMOTE_NC(df_train , "stroke", perc_maj =70)
+```
+
+```{r}
+table(df_smote$stroke)
+```
+
+## Training
+
+Now after we have clean balanced data we will start training the models.
+
+### First we will predict a stroke using biological measurements features.
+
+The biological measurement features are :
+gender,age,hypertension, heart_disease,avg_glucose_level,bmi.
+
+### We will start with the sub category controlled- biological with the
+### feaurtes hypertension,heart_disease,avg_glucose_level,bmi.
+
+The first model will be svm model.
+
+```{r}
+CBP_data <- subset(df_smote, select = c(hypertension,heart_disease,avg_glucose_level,bmi,stroke))
+CBP_test <- subset(df_test, select = c(hypertension,heart_disease,avg_glucose_level,bmi,stroke))
+```
+
+
+```{r}
+svm_CBP = svm(formula = stroke ~ .,
+				data = CBP_data,
+				type = 'C-classification',
+				kernel = 'linear')
+```
+
+```{r}
+stroke_pred_svm_CBP = predict(svm_CBP, newdata = CBP_test)
+```
+
+```{r}
+svm_acc_CBP = mean(stroke_pred_svm_CBP == CBP_test$stroke)
+confusionMatrix(table(stroke_pred_svm_CBP, CBP_test$stroke))
+```
+
+Now we will try random forest.
+
+```{r}
+random_forest_CBP = randomForest(x = CBP_data[-5],
+                             y = CBP_data$stroke,
+                             ntree = 400)
+```
+
+
+```{r}
+forest_pred_CPB = predict(random_forest_CBP, newdata = CBP_test)
+```
+
+```{r}
+rf_acc_CBP=mean(forest_pred_CPB==CBP_test$stroke)
+confusionMatrix(forest_pred_CPB, CBP_test$stroke)
+```
+
+Now we will use logistic regression
+
+```{r}
+logi_reg_CBP <- glm(stroke ~.,family=binomial(link='logit'),data=CBP_data)
+```
+
+```{r}
+
+Test_CBP = CBP_test
+
+Test_CBP$model_prob <- predict(logi_reg_CBP, Test_CBP, type = "response")
+
+Test_CBP <- Test_CBP  %>% mutate(model_pred = 1*(model_prob > .50) + 0,
+                                 stroke_binary = 1*(stroke == 1) + 0)
+Test_CBP <- Test_CBP %>% mutate(accurate = 1*(model_pred == stroke_binary))
+lr_acc_CBP = sum(Test_CBP$accurate)/nrow(Test_CBP)
+lr_acc_CBP
+```
+
+Now we will try LDA model
+```{r}
+fit_lda_CBP <- lda(stroke~., data = CBP_data)
+pred_lda_CBP <- predict(fit_lda_CBP, CBP_test)
+# CBP_test[,-5]
+lda_acc_CBP = mean(pred_lda_CBP$class==CBP_test$stroke)
+lda_acc_CBP
+```
+
+Now we will try RDA model
+```{r}
+rda_model_CBP = rda(stroke~., data=CBP_data, gamma = 0.5, lambda = 0.1)
+rda_pred_CBP = predict(rda_model_CBP, CBP_test)
+rda_acc_CBP = mean(rda_pred_CBP$class==CBP_test$stroke)
+rda_acc_CBP
+```
+
+Now we will try PLS model
+```{r}
+pls_model_CBP <- train(stroke ~ ., data = CBP_data,
+              method = "pls",
+              metric = "Accuracy",
+              tuneLength = 20,
+              preProc = c("zv","center","scale"))
+
+pls_preds_CBP = predict(pls_model_CBP, CBP_test)
+pls_acc_CBP = mean(pls_preds_CBP==CBP_test$stroke)
+pls_acc_CBP
+# length(CBP_test)
+```
+
+
+models accuracy summary
+```{r}
+# controlled- biological features
+model_name = c('svm','Random Forest','Logistic Regression', 'lda','RDA','PLS')
+accs = c(svm_acc_CBP,rf_acc_CBP,lr_acc_CBP, lda_acc_CBP,rda_acc_CBP,pls_acc_CBP)
+acc_data = data.frame(model_name=model_name,accuracy=accs)
+acc_data %>% mutate(Error=1-accuracy)
+# acc_data/
+```
+
+
+## Now will predict a stroke using the second sub category uncontrolled-
+biological with features age gender.
+
+#### We will do the prediction with svm model.
+
+```{r}
+UCBP_data <- subset(df_smote, select = c(age,gender,stroke))
+UCBP_test <- subset(df_test, select = c(age,gender,stroke))
+```
+
+```{r}
+svm_UCBP = svm(formula = stroke ~ .,
+				data = UCBP_data,
+				type = 'C-classification',
+				kernel = 'linear')
+```
+
+```{r}
+UCBP_pred_svm = predict(svm_UCBP, newdata = UCBP_test)
+```
+
+```{r}
+svm_acc_UCBP = mean(UCBP_pred_svm == UCBP_test$stroke)
+confusionMatrix(table(UCBP_pred_svm, UCBP_test$stroke))
+```
+
+#### Now we will try random forest.
+
+```{r}
+random_forest_UCBP = randomForest(x = UCBP_data[-3],
+                             y = UCBP_data$stroke,
+                             ntree = 200)
+```
+
+```{r}
+forest_pred_UCPB = predict(random_forest_UCBP, newdata = UCBP_test)
+```
+
+```{r}
+rf_acc_UCBP=mean(forest_pred_UCPB==UCBP_test$stroke)
+confusionMatrix(forest_pred_UCPB, UCBP_test$stroke)
+```
+
+#### Now we will use logistic regression
+
+```{r}
+logi_reg_UCBP <- glm(stroke ~.,family=binomial(link='logit'),data=UCBP_data)
+```
+
+```{r}
+
+Test_UCBP = UCBP_test
+
+Test_UCBP$model_prob <- predict(logi_reg_UCBP, Test_UCBP, type = "response")
+
+Test_UCBP <- Test_UCBP  %>% mutate(model_pred = 1*(model_prob > .50) + 0,
+                                 stroke_binary = 1*(stroke == 1) + 0)
+Test_UCBP <- Test_UCBP %>% mutate(accurate = 1*(model_pred == stroke_binary))
+lr_acc_UCBP = sum(Test_UCBP$accurate)/nrow(Test_UCBP)
+lr_acc_UCBP
+```
+
+#### Now we will try LDA model
+```{r}
+fit_lda_UCBP <- lda(stroke~., data = UCBP_data)
+pred_lda_UCBP <- predict(fit_lda_UCBP, UCBP_test)
+# CBP_test[,-5]
+lda_acc_UCBP = mean(pred_lda_UCBP$class==UCBP_test$stroke)
+lda_acc_UCBP
+```
+#### Now we will try RDA model
+```{r}
+rda_model_UCBP = rda(stroke~., data=UCBP_data, gamma = 0, lambda = 0.1)
+rda_pred_UCBP = predict(rda_model_UCBP, UCBP_test)
+rda_acc_UCBP = mean(rda_pred_UCBP$class==UCBP_test$stroke)
+rda_acc_UCBP
+```
+
+#### Now we will try PLS model
+```{r}
+pls_model_UCBP <- train(stroke ~ ., data = UCBP_data,
+              method = "pls",
+              metric = "Accuracy",
+              tuneLength = 20,
+              preProc = c("zv","center","scale"))
+
+pls_preds_UCBP = predict(pls_model_UCBP, UCBP_test)
+pls_acc_UCBP = mean(pls_preds_UCBP==UCBP_test$stroke)
+pls_acc_UCBP
+```
+
+## The results summary
+```{r}
+# uncontrolled biological features
+model_name = c('svm','Random Forest','Logistic Regression','lda', 'RDA','PLS')
+accs = c(svm_acc_UCBP,rf_acc_UCBP,lr_acc_UCBP,lda_acc_UCBP, rda_acc_UCBP,pls_acc_UCBP)
+acc_data = data.frame(model_name=model_name,accuracy=accs)
+acc_data %>% mutate(Error=1-accuracy)
+```
+
+### Now we will predict using all the  biological measurements.
+
+#### SVM model
+
+```{r}
+BHM_data <- subset(df_smote, select = c(gender,age,hypertension,heart_disease,avg_glucose_level,bmi,stroke))
+BHM_test <- subset(df_test, select = c(gender,age,hypertension,heart_disease,avg_glucose_level,bmi,stroke))
+```
+
+```{r}
+BHM_svm = svm(formula = stroke ~ .,
+				data = BHM_data,
+				type = 'C-classification',
+				kernel = 'linear')
+```
+
+```{r}
+stroke_pred_BHM = predict(BHM_svm, newdata = BHM_test)
+```
+
+```{r}
+svm_acc_BHM = mean(stroke_pred_BHM == BHM_test$stroke)
+confusionMatrix(table(stroke_pred_BHM, BHM_test$stroke))
+```
+
+#### Now we will do random forest
+
+```{r}
+random_forest_BHM = randomForest(x = BHM_data[-7],
+                             y = BHM_data$stroke,
+                             ntree = 600)
+```
+
+```{r}
+forest_pred_BHM = predict(random_forest_BHM, newdata = BHM_test)
+```
+
+```{r}
+rf_acc_BHM=mean(forest_pred_BHM==BHM_test$stroke)
+confusionMatrix(forest_pred_BHM, BHM_test$stroke)
+```
+
+#### Now we will use logistic regression
+
+```{r}
+logi_reg_BHM <- glm(stroke ~.,family=binomial(link='logit'),data=BHM_data)
+```
+
+```{r}
+
+test_BHM = BHM_test
+
+test_BHM$model_prob <- predict(logi_reg_BHM, test_BHM, type = "response")
+
+test_BHM <- test_BHM  %>% mutate(model_pred = 1*(model_prob > .50) + 0,
+                                 stroke_binary = 1*(stroke == 1) + 0)
+test_BHM <- test_BHM %>% mutate(accurate = 1*(model_pred == stroke_binary))
+lr_acc_BHM = sum(test_BHM$accurate)/nrow(test_BHM)
+lr_acc_BHM
+```
+
+#### LDA model
+```{r}
+fit_lda_BHM <- lda(stroke~., data = BHM_data)
+pred_lda_BHM <- predict(fit_lda_BHM, BHM_test)
+# CBP_test[,-5]
+lda_acc_BHM = mean(pred_lda_BHM$class==BHM_test$stroke)
+lda_acc_BHM
+```
+
+#### RDA model
+```{r}
+rda_model_BHM = rda(stroke~., data=BHM_data, gamma = 0.1, lambda = 0.1)
+rda_pred_BHM = predict(rda_model_BHM, BHM_test)
+rda_acc_BHM = mean(rda_pred_BHM$class==BHM_test$stroke)
+rda_acc_BHM
+```
+
+#### PLS model
+```{r}
+pls_model_BHM <- train(stroke ~ ., data = BHM_data,
+              method = "pls",
+              metric = "Accuracy",
+              tuneLength = 20,
+              preProc = c("zv","center","scale"))
+
+pls_preds_BHM = predict(pls_model_BHM, BHM_test)
+pls_acc_BHM = mean(pls_preds_BHM==BHM_test$stroke)
+pls_acc_BHM
+```
+
+### accuracy summary
+```{r}
+# biological features
+model_name = c('svm','Random Forest','Logistic Regression', 'lda', 'RDA','PLS')
+accs = c(svm_acc_BHM,rf_acc_BHM,lr_acc_BHM, lda_acc_BHM, rda_acc_BHM,pls_acc_BHM)
+acc_data = data.frame(model_name=model_name,accuracy=accs)
+acc_data %>% mutate(Error=1-accuracy)
+```
+
+### Now we will predict a stroke using lifestyle related factors.
+
+lifestyle related factors are : smoking_status,ever_married,work_type,
+Residence_type.
+
+#### We will do the prediction with svm model.
+
+```{r}
+LSRF_data <- subset(df_smote, select = c(smoking_status,ever_married,work_type, Residence_type,stroke))
+LSRF_test <- subset(df_test, select = c( smoking_status,ever_married,work_type, Residence_type,stroke))
+```
+
+#### Now we will predict with svm model
+
+```{r}
+svm_model_LSRF = svm(formula = stroke ~ .,
+				data = LSRF_data,
+				type = 'C-classification',
+				kernel = 'linear')
+```
+
+```{r}
+LSRF_svm_pre = predict(svm_model_LSRF, newdata = LSRF_test)
+```
+
+```{r}
+svm_acc_LSRF = mean(LSRF_svm_pre == LSRF_test$stroke)
+confusionMatrix(table(LSRF_svm_pre, LSRF_test$stroke))
+```
+
+#### Now we will try random forest.
+
+```{r}
+ran_for_LSRF = randomForest(x = LSRF_data[-5],
+                             y = LSRF_data$stroke,
+                             ntree = 400)
+```
+
+```{r}
+forest_pred_LSRF = predict(ran_for_LSRF, newdata = LSRF_test)
+```
+
+```{r}
+rf_acc_LSRF=mean(forest_pred_LSRF==LSRF_test$stroke)
+confusionMatrix(forest_pred_LSRF, LSRF_test$stroke)
+```
+
+#### Now we will use logistic regression
+
+```{r}
+model_LSRF <- glm(stroke ~.,family=binomial(link='logit'),data=LSRF_data)
+```
+
+```{r}
+
+Test_LSRF = LSRF_test
+
+Test_LSRF$model_prob <- predict(model_LSRF, Test_LSRF, type = "response")
+
+Test_LSRF <- Test_LSRF  %>% mutate(model_pred = 1*(model_prob > .50) + 0,
+                                 stroke_binary = 1*(stroke == 1) + 0)
+Test_LSRF <- Test_LSRF  %>% mutate(accurate = 1*(model_pred==stroke_binary)) 
+lr_acc_LSRF = sum(Test_LSRF$accurate)/nrow(Test_LSRF)
+lr_acc_LSRF
+```
+
+#### lda model
+```{r}
+fit_lda_LSRF <- lda(stroke~., data = LSRF_data)
+pred_lda_LSRF <- predict(fit_lda_LSRF, LSRF_test)
+# CBP_test[,-5]
+lda_acc_LSRF = mean(pred_lda_LSRF$class==LSRF_test$stroke)
+lda_acc_LSRF
+```
+
+#### rda model
+```{r}
+rda_model_LSRF = rda(stroke~., data=LSRF_data, gamma = 0.9, lambda = 0.1)
+rda_pred_LSRF = predict(rda_model_LSRF, LSRF_test)
+rda_acc_LSRF = mean(rda_pred_LSRF$class==LSRF_test$stroke)
+rda_acc_LSRF
+```
+
+#### PLS model
+```{r}
+pls_model_LSRF <- train(stroke ~ ., data = LSRF_data,
+              method = "pls",
+              metric = "Accuracy",
+              tuneLength = 20,
+              preProc = c("zv","center","scale"))
+
+pls_preds_LSRF = predict(pls_model_LSRF, LSRF_test)
+pls_acc_LSRF = mean(pls_preds_LSRF==LSRF_test$stroke)
+pls_acc_LSRF
+```
+
+## Accuracies results
+```{r}
+# lifestyle related factors
+model_name = c('svm','Random Forest','Logistic Regression', 'lda', 'RDA', 'PLS')
+accs = c(svm_acc_LSRF,rf_acc_LSRF,lr_acc_LSRF, lda_acc_LSRF, rda_acc_LSRF, pls_acc_LSRF)
+acc_data = data.frame(model_name=model_name,accuracy=accs)
+acc_data %>% mutate(Error=1-accuracy)
+```
+
+### Now we will use all the features to predict a stroke.
+
+#### predection with svm model
+
+```{r}
+svm_model_all = svm(formula = stroke ~ .,
+				data = df_smote,
+				type = 'C-classification',
+				kernel = 'linear')
+```
+
+
+```{r}
+y_pred_all = predict(svm_model_all, newdata = df_test)
+```
+
+```{r}
+svm_acc_ALL = mean(y_pred_all == df_test$stroke)
+confusionMatrix(table(y_pred_all, df_test$stroke))
+
+```
+
+#### Now we will try random forest.
+
+```{r}
+random_for_all = randomForest(x = df_smote[-11],
+                             y = df_smote$stroke,
+                             ntree = 1000)
+```
+
+```{r}
+forest_pred_all = predict(random_for_all, newdata = df_test)
+```
+
+```{r}
+rf_acc_ALL=mean(forest_pred_all==df_test$stroke)
+confusionMatrix(forest_pred_all, df_test$stroke)
+```
+
+#### Now we will use logistic regression
+
+```{r}
+model_all <- glm(stroke ~.,family=binomial(link='logit'),data=df_smote)
+```
+
+```{r}
+
+Test_all = df_test
+
+Test_all$model_prob <- predict(model_all, Test_all, type = "response")
+
+Test_all <- Test_all  %>% mutate(model_pred = 1*(model_prob > .50) + 0,
+                                 stroke_binary = 1*(stroke == 1) + 0)
+Test_all <- Test_all %>% mutate(accurate = 1*(model_pred == stroke_binary))
+lr_acc_ALL = sum(Test_all$accurate)/nrow(Test_all)
+lr_acc_ALL
+```
+
+
+#### lda model
+```{r}
+fit_lda_ALL <- lda(stroke~., data = df_smote)
+pred_lda_ALL <- predict(fit_lda_ALL, df_test)
+# CBP_test[,-5]
+lda_acc_ALL = mean(pred_lda_ALL$class==df_test$stroke)
+lda_acc_ALL
+```
+
+#### rda model
+```{r}
+rda_model_ALL = rda(stroke~., data=df_smote, gamma = 0.3, lambda = 0.1)
+rda_pred_ALL = predict(rda_model_ALL, df_test)
+rda_acc_ALL = mean(rda_pred_ALL$class==df_test$stroke)
+rda_acc_ALL
+```
+
+#### PLS model
+```{r}
+pls_model_ALL <- train(stroke ~ ., data = df_smote,
+              method = "pls",
+              metric = "Accuracy",
+              tuneLength = 20,
+              preProc = c("zv","center","scale"))
+
+pls_preds_ALL = predict(pls_model_ALL, df_test)
+pls_acc_ALL = mean(pls_preds_ALL==df_test$stroke)
+pls_acc_ALL
+```
+
+### accuracy summary
+```{r}
+# all the features
+model_name = c('svm','Random Forest','Logistic Regression','lda','RDA',
+               'PLS')
+accs = c(svm_acc_ALL,rf_acc_ALL,lr_acc_ALL, lda_acc_ALL,rda_acc_ALL,pls_acc_ALL)
+acc_data = data.frame(model_name=model_name,accuracy=accs)
+acc_data %>% mutate(Error=1-accuracy)
+```
+
+
+
